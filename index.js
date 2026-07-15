@@ -19,17 +19,30 @@
  */
 
 const dns = require('dns');
-// Força o Node a preferir IPv4 na resolução de DNS. Motivo: os runners do
-// GitHub Actions têm um problema conhecido de rota de IPv6 assimétrica/quebrada
-// pra alguns destinos específicos - o Node tenta IPv4 e IPv6 ao mesmo tempo
-// ("Happy Eyeballs") e usa o que responder primeiro, então quando a rota IPv6
-// está quebrada só pra um destino, a conexão trava até estourar o tempo em
-// ALGUMAS tentativas e funciona normalmente em outras (exatamente o padrão do
-// "UND_ERR_CONNECT_TIMEOUT" intermitente que vimos só na etapa de Estoque).
-// Preferir IPv4 evita essa rota problemática por completo.
+// Força o Node a preferir IPv4 na resolução de DNS (não resolveu sozinho,
+// mas não faz mal manter - ver comentário do Agent abaixo pra explicação
+// atualizada do que realmente está acontecendo).
 if (dns.setDefaultResultOrder) {
   dns.setDefaultResultOrder('ipv4first');
 }
+
+// Aumenta o tempo limite de CONEXÃO (não de resposta) usado pelo fetch
+// nativo do Node em todo o processo. Motivo: o log mostrou
+// "UND_ERR_CONNECT_TIMEOUT" nas 3 tentativas, sempre na mesma etapa (a
+// primeira chamada de rede da execução, ainda "fria") - ou seja, não é
+// intermitência nem bloqueio, é o servidor da ORGM (ou o caminho de rede até
+// ele) simplesmente demorando mais pra aceitar essa primeira conexão do que
+// o limite padrão do Node (10s). O undici (motor por trás do fetch nativo)
+// permite configurar esse limite via um Agent global - aqui ele sobe pra 45s,
+// dando bastante folga sem arriscar travar demais em caso de falha real.
+const { Agent, setGlobalDispatcher } = require('undici');
+setGlobalDispatcher(
+  new Agent({
+    connect: { timeout: 45_000 },
+    headersTimeout: 60_000,
+    bodyTimeout: 60_000,
+  })
+);
 
 const { SheetsClient } = require('./src/sheetsClient');
 const { executarRodadaPedidosDasReservas } = require('./src/reservas');

@@ -1,0 +1,19 @@
+{
+  "name": "orgm-tempo-real",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Integração ORGM -> Google Sheets (Estoque, Reservas x Pedidos, Dashboards), rodando via GitHub Actions em vez de Google Apps Script.",
+  "type": "commonjs",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test/run-all.js"
+  },
+  "dependencies": {
+    "googleapis": "^144.0.0",
+    "xlsx": "^0.18.5"
+  }
+}

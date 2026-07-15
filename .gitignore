@@ -1,0 +1,5 @@
+node_modules/
+*.log
+# Nunca commitar a chave da conta de serviço nem nenhum arquivo de credencial.
+*service-account*.json
+.env

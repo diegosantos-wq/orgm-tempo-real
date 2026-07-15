@@ -1,93 +1,245 @@
 'use strict';
 
 /**
- * Porte de executarAtualizacaoDeEstoque_() do .gs original: dispara o
- * export de estoque na ORGM, espera o arquivo novo aparecer, baixa o xlsx
- * e escreve na aba "Estoque".
+ * Porte de executarRodadaPedidosDasReservas_() do .gs original: orquestra
+ * uma rodada completa (Estoque -> Reservas x Pedidos -> Dashboard de
+ * Separação), usando as funções puras de reservasLogica.js pro cálculo em
+ * si e sheetsClient/orgmClient pro I/O.
  *
- * Diferença em relação ao original: em vez do truque
- * "Drive.Files.create(..., MimeType.GOOGLE_SHEETS)" pra converter o xlsx
- * numa planilha temporária do Google só pra poder ler os valores (que só
- * existia porque o Apps Script não tem uma lib de xlsx nativa), aqui a lib
- * "xlsx" (SheetJS) lê o buffer baixado diretamente - mais simples e sem
- * precisar de nenhum arquivo temporário no Drive.
+ * Diferença em relação ao original: não existe mais LockService aqui -
+ * quem evita duas rodadas simultâneas é o "concurrency group" do próprio
+ * workflow do GitHub Actions (ver .github/workflows/tempo-real.yml), que é
+ * o equivalente nativo e mais simples nesse ambiente.
  */
 
-const XLSX = require('xlsx');
 const orgm = require('./orgmClient');
-const { corrigirColunaLocal, sleep, agoraBrasilia } = require('./util');
+const { colIndexToLetter } = require('./sheetsClient');
+const { executarAtualizacaoDeEstoque } = require('./estoque');
+const { carregarEstadoConferidoPorBin, salvarEstadoConferidoPorBin } = require('./estadoReservas');
+const {
+  COLUNAS_RESERVAS,
+  construirMapasEstoque,
+  calcularBinsParaConsultar,
+  podarBinsNaoReservados,
+  aplicarResultadoLote,
+} = require('./reservasLogica');
+const { sleep, agoraBrasilia } = require('./util');
 
-const NOME_ABA_ESTOQUE = 'Estoque';
+const NOME_ABA_RESERVAS = 'Reservas x Pedidos';
 
-function lerXlsxComoLinhas(buffer) {
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-  const primeiraAba = workbook.SheetNames[0];
-  const planilha = workbook.Sheets[primeiraAba];
-  // header:1 => array de arrays (igual getDataRange().getValues()); raw:true
-  // => mantém números como número em vez de string formatada; defval:'' =>
-  // célula vazia vira '' em vez de undefined, igual ao Apps Script.
-  return XLSX.utils.sheet_to_json(planilha, { header: 1, raw: true, defval: '' });
+// Tempo máximo que a busca de reservas roda antes de parar e escrever o que
+// já tiver, pra cada execução do workflow ficar curta e previsível (evita
+// rodadas se acumulando na fila do GitHub Actions). O que ficar de fora
+// continua "precisa conferir" na próxima rodada.
+const LIMITE_TEMPO_BUSCA_RESERVAS_MS = Number(process.env.LIMITE_TEMPO_BUSCA_RESERVAS_MS) || 4 * 60 * 1000;
+
+function a1Range(row1, col1, numRows, numCols) {
+  const c1 = colIndexToLetter(col1 - 1);
+  const c2 = colIndexToLetter(col1 - 1 + numCols - 1);
+  return `${c1}${row1}:${c2}${row1 + numRows - 1}`;
 }
 
-/**
- * Espera até ~22,5s (15 tentativas de 1,5s) o ORGM terminar de gerar o
- * relatório novo (checa por um anexo com DtEnvio >= início da espera).
- */
-async function aguardarAnexoNovo(inicioMs) {
-  for (let tentativa = 0; tentativa < 15; tentativa++) {
-    await sleep(1500);
-    const candidato = await orgm.anexoMaisRecente();
-    if (candidato) {
-      const { extrairDataDotNet } = require('./util');
-      if (extrairDataDotNet(candidato.DtEnvio) >= inicioMs) {
-        return candidato;
-      }
+async function executarRodadaPedidosDasReservas(sheetsClient) {
+  try {
+    await executarAtualizacaoDeEstoque(sheetsClient);
+    // Roda o dashboard de estoque junto, igual atualizarEstoque() fazia no .gs.
+    try {
+      await require('./dashboard').criarDashboard(sheetsClient);
+    } catch (e) {
+      console.log('Erro ao atualizar o Dashboard de Estoque: ' + e);
+    }
+  } catch (e) {
+    console.log('Falha ao atualizar o Estoque antes de buscar as reservas: ' + e);
+  }
+
+  const dadosEstoque = await sheetsClient.getValues('Estoque');
+  if (!dadosEstoque.length || dadosEstoque.length < 2) {
+    console.log('executarRodadaPedidosDasReservas: abortado, aba "Estoque" vazia ou inexistente.');
+    return { abortado: true, motivo: 'estoque_vazio' };
+  }
+
+  const cabecalhoEstoque = dadosEstoque[0];
+  const linhasEstoque = dadosEstoque.slice(1);
+  const idx = {
+    bin: cabecalhoEstoque.indexOf('BIN'),
+    reservado: cabecalhoEstoque.indexOf('Reservado'),
+    almoxarifado: cabecalhoEstoque.indexOf('Almoxarifado'),
+  };
+  if (idx.bin < 0) idx.bin = 1;
+  if (idx.reservado < 0) idx.reservado = 6;
+  if (idx.almoxarifado < 0) idx.almoxarifado = 0;
+
+  const { almoxarifadoPorBin, reservadoPorBinComEstoque, binsReservados, listaBins } = construirMapasEstoque(linhasEstoque, idx);
+
+  if (!listaBins.length) {
+    console.log('executarRodadaPedidosDasReservas: abortado, nenhum BIN com Reservado > 0.');
+    return { abortado: true, motivo: 'sem_bins_reservados' };
+  }
+
+  let estadoConferidoPorBin = await carregarEstadoConferidoPorBin(sheetsClient);
+  estadoConferidoPorBin = podarBinsNaoReservados(estadoConferidoPorBin, binsReservados);
+
+  const colunas = COLUNAS_RESERVAS;
+  await sheetsClient.ensureSheet(NOME_ABA_RESERVAS);
+
+  // Verifica se o cabeçalho salvo (linha 4) ainda bate com "colunas".
+  const dadosReservas = await sheetsClient.getValues(NOME_ABA_RESERVAS);
+  let cabecalhoValido = false;
+  if (dadosReservas.length >= 4) {
+    const cabecalhoAtual = dadosReservas[3] || [];
+    cabecalhoValido = colunas.every((col, i) => cabecalhoAtual[i] === col);
+  }
+  if (!cabecalhoValido) {
+    await sheetsClient.clearValues(NOME_ABA_RESERVAS);
+    estadoConferidoPorBin = {};
+  }
+
+  // Upsert por BIN: carrega o que já existe (linha 5 em diante) num mapa,
+  // pra só substituir a entrada do BIN que for reconsultado nesta rodada -
+  // nunca um wipe cego do resto.
+  const mapaLinhasPorBin = {};
+  if (cabecalhoValido && dadosReservas.length > 4) {
+    for (let i = 4; i < dadosReservas.length; i++) {
+      const linha = dadosReservas[i];
+      const chaveBinExistente = String(linha[1]); // coluna B = BIN
+      if (!mapaLinhasPorBin[chaveBinExistente]) mapaLinhasPorBin[chaveBinExistente] = [];
+      mapaLinhasPorBin[chaveBinExistente].push(linha);
     }
   }
-  return null;
-}
+  podarBinsNaoReservados(mapaLinhasPorBin, binsReservados);
 
-/**
- * Executa a atualização de Estoque completa e escreve na aba "Estoque".
- * Lança erro se algo falhar (quem chama decide se trata como fatal ou só
- * loga e segue, igual ao try/catch em volta de atualizarEstoque() no .gs).
- */
-async function executarAtualizacaoDeEstoque(sheetsClient) {
-  const inicio = Date.now();
+  await sheetsClient.setValues(NOME_ABA_RESERVAS, 'A1:B1', [['Reservas x Pedidos (Ordem de Venda) - por BIN', '']]);
+  await sheetsClient.setValues(NOME_ABA_RESERVAS, 'A2:B2', [['Atualizado em:', agoraBrasilia()]]);
+  await sheetsClient.setValues(NOME_ABA_RESERVAS, a1Range(4, 1, 1, colunas.length), [colunas]);
+  const sheetIdReservas = await sheetsClient.getSheetId(NOME_ABA_RESERVAS);
+  await sheetsClient.setFont(sheetIdReservas, 0, 0, 1, 1, { size: 14, bold: true });
+  await sheetsClient.setFont(sheetIdReservas, 3, 0, 1, colunas.length, { bold: true });
 
-  await orgm.dispararExportEstoque();
-  const anexo = await aguardarAnexoNovo(inicio);
-  if (!anexo) {
-    throw new Error('Tempo esgotado esperando a ORGM gerar o relatório de estoque.');
+  const binsParaConsultar = calcularBinsParaConsultar(listaBins, estadoConferidoPorBin, reservadoPorBinComEstoque);
+
+  const inicioExecucao = Date.now();
+  let binsProcessados = 0;
+  let reservasEncontradasNestaExecucao = 0;
+  let binsSemReservaAtivaEncontrada = 0;
+  let falhaGeral = false;
+  const avisosDiscrepancia = [];
+
+  for (let i = 0; i < binsParaConsultar.length; ) {
+    if (Date.now() - inicioExecucao > LIMITE_TEMPO_BUSCA_RESERVAS_MS) break;
+    const fimLote = Math.min(i + orgm.TAMANHO_LOTE_BUSCA_RESERVAS, binsParaConsultar.length);
+    const loteBins = binsParaConsultar.slice(i, fimLote);
+    try {
+      const resultadosLote = await orgm.buscarReservasDeVariosBins(loteBins);
+      const { reservasEncontradas, binsSemReservaAtiva, avisos } = aplicarResultadoLote({
+        resultadosLote,
+        loteBins,
+        almoxarifadoPorBin,
+        reservadoPorBinComEstoque,
+        mapaLinhasPorBin,
+        estadoConferidoPorBin,
+        colunas,
+      });
+      reservasEncontradasNestaExecucao += reservasEncontradas;
+      binsSemReservaAtivaEncontrada += binsSemReservaAtiva;
+      avisosDiscrepancia.push(...avisos);
+    } catch (e) {
+      // Não loga o número do BIN nem quantidades aqui de propósito: se o
+      // repositório for público, os logs de cada execução do GitHub Actions
+      // também são públicos - só o tamanho do lote fica no log, nunca dado
+      // de estoque/reserva.
+      console.log('Falha num lote de ' + loteBins.length + ' BIN(s): ' + (e && e.message ? e.message : e));
+      if (e && e.loteInteiroFalhou) {
+        // Lote inteiro falhou (ORGM fora do ar, rede, etc.) - para a rodada
+        // por completo aqui; os BINs que ainda precisavam ser conferidos
+        // continuam na fila pra próxima rodada agendada.
+        falhaGeral = true;
+        break;
+      }
+    }
+    binsProcessados += loteBins.length;
+    i = fimLote;
+    await sleep(200);
   }
 
-  const buffer = await orgm.baixarAnexo(anexo.TokenAnexo);
-  const linhas = lerXlsxComoLinhas(buffer);
-  corrigirColunaLocal(linhas);
+  await salvarEstadoConferidoPorBin(sheetsClient, estadoConferidoPorBin);
 
-  await sheetsClient.ensureSheet(NOME_ABA_ESTOQUE);
-  await sheetsClient.clearValues(NOME_ABA_ESTOQUE);
+  const backlogRestante = Math.max(0, binsParaConsultar.length - binsProcessados);
+  const terminouTudo = backlogRestante === 0 && !falhaGeral;
 
-  if (linhas.length) {
-    const numCols = linhas[0].length;
-    const { colIndexToLetter } = require('./sheetsClient');
-    const ultimaColuna = colIndexToLetter(numCols - 1);
-    await sheetsClient.setValues(NOME_ABA_ESTOQUE, `A1:${ultimaColuna}${linhas.length}`, linhas);
-    const colunaNota = colIndexToLetter(numCols + 1); // igual ao "+2" (1-based) do original
-    await sheetsClient.setValues(
-      NOME_ABA_ESTOQUE,
-      `${colunaNota}1:${colunaNota}1`,
-      [['Atualizado em: ' + agoraBrasilia()]]
-    );
+  const linhasFinais = [];
+  Object.keys(mapaLinhasPorBin)
+    .sort()
+    .forEach((chaveBin) => {
+      mapaLinhasPorBin[chaveBin].forEach((linha) => linhasFinais.push(linha));
+    });
+
+  if (dadosReservas.length > 4) {
+    await sheetsClient.clearValues(NOME_ABA_RESERVAS, a1Range(5, 1, dadosReservas.length - 4, colunas.length));
+  }
+  if (linhasFinais.length) {
+    await sheetsClient.setValues(NOME_ABA_RESERVAS, a1Range(5, 1, linhasFinais.length, colunas.length), linhasFinais);
+  }
+  await sheetsClient.autoResizeColumns(sheetIdReservas, 0, colunas.length);
+
+  let mensagem =
+    `BINs reservados no total: ${listaBins.length}\n` +
+    `BINs que mudaram desde a última conferência: ${binsParaConsultar.length}\n` +
+    `BINs conferidos nesta execução: ${binsProcessados}\n` +
+    `Reservas ativas confirmadas nesta execução: ${reservasEncontradasNestaExecucao}\n` +
+    `Total de linhas atualmente na aba "Reservas x Pedidos": ${linhasFinais.length}`;
+
+  if (binsSemReservaAtivaEncontrada > 0) {
+    mensagem += `\n\nAtenção: ${binsSemReservaAtivaEncontrada} BIN(s) consultados nesta execução aparecem com Reservado > 0 no Estoque, mas a busca do ORGM só trouxe reservas já baixadas (ou nenhuma) - vale conferir manualmente esses casos.`;
+  }
+  if (avisosDiscrepancia.length > 0) {
+    // Só a contagem, nunca o detalhe (BIN/quantidade) - se o repositório for
+    // público, o log desta execução também é público. O detalhe completo de
+    // cada discrepância fica só na aba "Reservas x Pedidos" em si.
+    mensagem += `\n\nAtenção: ${avisosDiscrepancia.length} BIN(s) com soma de reservas ativas diferente do Reservado no Estoque - vale conferir manualmente.`;
+  }
+  if (falhaGeral) {
+    mensagem += `\n\nAtenção: um lote inteiro de consultas à ORGM falhou nesta execução (rede ou serviço indisponível). A rodada parou aqui de propósito - ainda restam ${backlogRestante} BIN(s) na fila, que continuam sendo retomados automaticamente na próxima rodada agendada.`;
+  } else if (!terminouTudo) {
+    mensagem += `\n\nAinda restam ${backlogRestante} BIN(s) na fila desta rodada por causa do tempo de execução - continuam sendo conferidos automaticamente na próxima rodada.`;
+  } else {
+    mensagem += '\n\nEm dia: todos os BINs que precisavam de conferência nesta rodada foram consultados.';
   }
 
-  // Importante: envia as escritas acumuladas AGORA, porque quem chama esta
-  // função (reservas.js) faz um getValues('Estoque') logo em seguida - se
-  // não desse flush aqui, essa leitura veria a aba desatualizada (as
-  // escritas ficam só enfileiradas até flush() ser chamado).
+  await sheetsClient.setValues(NOME_ABA_RESERVAS, 'A3:A3', [
+    [
+      (terminouTudo
+        ? 'Status: em dia - nenhum BIN pendente de conferência'
+        : `Status: ${backlogRestante} BIN(s) ainda pendente(s) de conferência` + (falhaGeral ? ' (falha de rede/ORGM)' : '')) +
+        ` - última rodada em ${agoraBrasilia()}.`,
+    ],
+  ]);
+  await sheetsClient.setFont(sheetIdReservas, 2, 0, 1, 1, { italic: true, color: '#666666' });
+
+  // Importante: envia as escritas acumuladas de "Reservas x Pedidos" AGORA,
+  // porque o Dashboard de Separação (chamado logo abaixo) faz um
+  // getValues(NOME_ABA_RESERVAS) - sem esse flush, ele leria a aba
+  // desatualizada (as escritas ficam só enfileiradas até flush()).
   await sheetsClient.flush();
 
-  return { linhas };
+  console.log(mensagem);
+
+  try {
+    await require('./dashboardSeparacao').criarDashboardSeparacao(sheetsClient);
+  } catch (e) {
+    console.log('Erro ao atualizar o Dashboard de Separação: ' + e);
+  }
+
+  return {
+    abortado: false,
+    listaBinsTotal: listaBins.length,
+    binsParaConsultar: binsParaConsultar.length,
+    binsProcessados,
+    reservasEncontradasNestaExecucao,
+    linhasFinais: linhasFinais.length,
+    terminouTudo,
+    falhaGeral,
+    backlogRestante,
+  };
 }
 
-module.exports = { executarAtualizacaoDeEstoque, lerXlsxComoLinhas, NOME_ABA_ESTOQUE };
+module.exports = { executarRodadaPedidosDasReservas, NOME_ABA_RESERVAS };

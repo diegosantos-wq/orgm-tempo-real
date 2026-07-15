@@ -283,6 +283,10 @@ async function criarDashboard(sheetsClient) {
   }
 
   await sheetsClient.autoResizeColumns(sheetId, 0, 6);
+
+  // Envia tudo que foi enfileirado (setValues/setFont/setNumberFormat/
+  // gráficos) numa única leva - ver comentário em flush() no sheetsClient.
+  await sheetsClient.flush();
 }
 
 module.exports = { criarDashboard, NOME_ABA_DASHBOARD };

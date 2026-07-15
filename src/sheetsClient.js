@@ -259,7 +259,8 @@ class SheetsClient {
    * usam valores inteiros, ex. "0"/"256"). Uma escala de 2 pontos (MIN -> MAX)
    * é o padrão mais simples e documentado pelo Google, e evita esse problema
    * por completo - ainda fica vermelho no 0% e verde no 100%, só sem o
-   * amarelo no meio.
+   * amarelo no meio. Cores em tom mais claro/suave (não tão escuro/saturado)
+   * a pedido do usuário.
    */
   async addConditionalColorScale(sheetId, rowStart, colStart, numRows, numCols) {
     await this.batchUpdate([
@@ -268,8 +269,8 @@ class SheetsClient {
           rule: {
             ranges: [this._range(sheetId, rowStart, colStart, numRows, numCols)],
             gradientRule: {
-              minpoint: { color: hexToRgb('#c5221f'), type: 'MIN' },
-              maxpoint: { color: hexToRgb('#137333'), type: 'MAX' },
+              minpoint: { color: hexToRgb('#e06666'), type: 'MIN' },
+              maxpoint: { color: hexToRgb('#93c47d'), type: 'MAX' },
             },
           },
           index: 0,

@@ -49,6 +49,10 @@ class SheetsClient {
     });
     this.sheets = google.sheets({ version: 'v4', auth: this.auth });
     this._metaCache = null;
+    // Filas de escrita acumuladas (ver flush()) - setValues/setFont/etc. só
+    // enfileiram aqui; nada é enviado à API até flush() ser chamado.
+    this._pendingValueRanges = [];
+    this._pendingFormatRequests = [];
   }
 
   async _refreshMeta() {
@@ -131,15 +135,16 @@ class SheetsClient {
    * Escreve valores literais (RAW - não interpreta como fórmula/data, cada
    * valor vai pra célula exatamente como está no array JS), igual ao
    * Range.setValues() do Apps Script.
+   *
+   * Não dispara chamada de rede na hora - só enfileira (ver flush()). Isso
+   * evita fazer uma requisição HTTP separada pra cada trechinho de célula
+   * escrito, que era o que estourava a cota de escrita do Google Sheets
+   * (60 requisições/minuto por usuário) no meio de rodadas com muitas
+   * seções (Dashboard, Dashboard Separação etc.).
    */
   async setValues(title, a1Range, values) {
     if (!values || !values.length) return;
-    await this.sheets.spreadsheets.values.update({
-      spreadsheetId: this.spreadsheetId,
-      range: `'${title}'!${a1Range}`,
-      valueInputOption: 'RAW',
-      requestBody: { values },
-    });
+    this._pendingValueRanges.push({ range: `'${title}'!${a1Range}`, values });
   }
 
   async clearValues(title, a1Range) {
@@ -149,12 +154,52 @@ class SheetsClient {
     });
   }
 
+  /**
+   * Enfileira requests de formatação/estrutura (negrito, número, escala de
+   * cor, gráficos, etc.) - também não dispara chamada de rede na hora, pelo
+   * mesmo motivo do setValues acima. Ver flush().
+   */
   async batchUpdate(requests) {
     if (!requests || !requests.length) return;
-    await this.sheets.spreadsheets.batchUpdate({
-      spreadsheetId: this.spreadsheetId,
-      requestBody: { requests },
-    });
+    this._pendingFormatRequests.push(...requests);
+  }
+
+  /**
+   * Envia tudo que foi enfileirado por setValues() e por batchUpdate()
+   * (direto ou via setFont/setNumberFormat/addConditionalColorScale/
+   * autoResizeColumns/addColumnChart/addBarChart) desde o último flush().
+   *
+   * Cada tipo vira UMA ÚNICA chamada de rede, não importa quantas vezes foi
+   * enfileirado: valores.batchUpdate (todas as escritas de célula) e
+   * spreadsheets.batchUpdate (toda a formatação/gráficos/cor). Antes desta
+   * mudança, um dashboard sozinho chegava a fazer 60-80 chamadas separadas
+   * numa única rodada - o Google Sheets limita a 60 requisições de escrita
+   * por minuto por usuário, e passar disso derrubava a rodada no meio (erro
+   * 429, engolido pelo try/catch de quem chama), o que explicava, por
+   * exemplo, o Dashboard de Separação às vezes mostrar só o título da
+   * tabela de OP sem os dados.
+   *
+   * Chame flush() ao final de toda função que escreve numa aba, e SEMPRE
+   * antes de qualquer getValues() que precise enxergar o que acabou de ser
+   * escrito nesta mesma execução (leitura não vê o que só está enfileirado).
+   */
+  async flush() {
+    if (this._pendingValueRanges.length) {
+      const data = this._pendingValueRanges;
+      this._pendingValueRanges = [];
+      await this.sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: { valueInputOption: 'RAW', data },
+      });
+    }
+    if (this._pendingFormatRequests.length) {
+      const requests = this._pendingFormatRequests;
+      this._pendingFormatRequests = [];
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: { requests },
+      });
+    }
   }
 
   /**

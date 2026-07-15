@@ -290,4 +290,3 @@ async function criarDashboard(sheetsClient) {
 }
 
 module.exports = { criarDashboard, NOME_ABA_DASHBOARD };
-

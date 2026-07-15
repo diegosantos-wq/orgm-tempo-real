@@ -384,4 +384,3 @@ function hexToRgb(hex) {
 }
 
 module.exports = { SheetsClient, colIndexToLetter };
-

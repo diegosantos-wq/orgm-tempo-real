@@ -46,12 +46,35 @@ function formEncode(obj) {
 }
 
 /**
+ * Wrapper em volta do fetch nativo que anexa a causa raiz (err.cause) na
+ * mensagem de erro. O fetch do Node (undici) joga um "TypeError: fetch
+ * failed" genérico pra qualquer falha de rede - o motivo de verdade
+ * (timeout, DNS, conexão recusada, certificado, IP bloqueado, etc.) fica só
+ * em err.cause, que se perde se a gente só faz `'texto: ' + e` (que é
+ * exatamente o que o log de "Falha ao atualizar o Estoque" faz). Isso é só
+ * diagnóstico de rede/infraestrutura - nenhum dado de estoque/reserva -
+ * então não tem problema aparecer no log de um repositório público.
+ */
+async function fetchComDiagnostico(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch (e) {
+    const causa = e && e.cause ? (e.cause.code || e.cause.message || String(e.cause)) : null;
+    const erroDetalhado = new Error(
+      (e && e.message ? e.message : String(e)) + (causa ? ' | causa: ' + causa : ' | (sem causa detalhada disponível)')
+    );
+    erroDetalhado.original = e;
+    throw erroDetalhado;
+  }
+}
+
+/**
  * Chamador genérico do EndPointGet (Chamada + JsonChamada).
  */
 async function chamarORGM(chamada, paramsExtras) {
   const corpo = Object.assign({}, credenciais(), paramsExtras || {});
 
-  const resposta = await fetch(ENDPOINT_URL, {
+  const resposta = await fetchComDiagnostico(ENDPOINT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: formEncode({
@@ -107,7 +130,7 @@ async function baixarAnexo(tokenAnexo) {
   );
   const corpoExterno = { Chamada: 'WORK_DownloadAnexoNota', JsonChamada: JSON.stringify(corpoInterno) };
 
-  const resposta = await fetch(DOWNLOAD_URL, {
+  const resposta = await fetchComDiagnostico(DOWNLOAD_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: formEncode({ data: JSON.stringify(corpoExterno) }),
@@ -151,7 +174,7 @@ async function buscarReservasDeUmBin(bin) {
     { PalavrasChave: [String(bin)], DashID: DASH_ID_BIN_HISTORICO, SerieID: SERIE_ID_BIN_HISTORICO },
     credenciais()
   );
-  const resposta = await fetch(ENDPOINT_URL, {
+  const resposta = await fetchComDiagnostico(ENDPOINT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: formEncode({

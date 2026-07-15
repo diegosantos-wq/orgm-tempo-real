@@ -243,4 +243,3 @@ async function executarRodadaPedidosDasReservas(sheetsClient) {
 }
 
 module.exports = { executarRodadaPedidosDasReservas, NOME_ABA_RESERVAS };
-

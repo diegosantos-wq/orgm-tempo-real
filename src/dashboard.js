@@ -10,7 +10,7 @@
  */
 
 const { colIndexToLetter } = require('./sheetsClient');
-const { extrairOcPc, extrairNotaFiscal, extrairGalpao, corrigirLocalCorrompido } = require('./util');
+const { extrairOcPc, extrairNotaFiscal, extrairGalpao, corrigirLocalCorrompido, agoraBrasilia } = require('./util');
 
 const LIMITE_ESTOQUE_BAIXO_PADRAO = 5;
 const FORMATO_KG = '#,##0.00 "kg"';
@@ -153,7 +153,7 @@ async function criarDashboard(sheetsClient) {
   // --- Título e KPIs ---
   await sheetsClient.setValues(NOME_ABA_DASHBOARD, 'A1:B1', [['Dashboard de Estoque - ORGM', '']]);
   await sheetsClient.setFont(sheetId, 0, 0, 1, 1, { size: 16, bold: true });
-  await sheetsClient.setValues(NOME_ABA_DASHBOARD, 'A2:B2', [['Atualizado em:', new Date().toLocaleString('pt-BR')]]);
+  await sheetsClient.setValues(NOME_ABA_DASHBOARD, 'A2:B2', [['Atualizado em:', agoraBrasilia()]]);
 
   await sheetsClient.setValues(NOME_ABA_DASHBOARD, 'A4:B7', [
     ['Estoque Total', totalEstoque],

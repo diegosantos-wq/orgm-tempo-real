@@ -91,3 +91,4 @@ async function executarAtualizacaoDeEstoque(sheetsClient) {
 }
 
 module.exports = { executarAtualizacaoDeEstoque, lerXlsxComoLinhas, NOME_ABA_ESTOQUE };
+

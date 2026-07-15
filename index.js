@@ -18,6 +18,19 @@
  * Nenhum desses valores deve ser colado direto no código - só em Secrets.
  */
 
+const dns = require('dns');
+// Força o Node a preferir IPv4 na resolução de DNS. Motivo: os runners do
+// GitHub Actions têm um problema conhecido de rota de IPv6 assimétrica/quebrada
+// pra alguns destinos específicos - o Node tenta IPv4 e IPv6 ao mesmo tempo
+// ("Happy Eyeballs") e usa o que responder primeiro, então quando a rota IPv6
+// está quebrada só pra um destino, a conexão trava até estourar o tempo em
+// ALGUMAS tentativas e funciona normalmente em outras (exatamente o padrão do
+// "UND_ERR_CONNECT_TIMEOUT" intermitente que vimos só na etapa de Estoque).
+// Preferir IPv4 evita essa rota problemática por completo.
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
+
 const { SheetsClient } = require('./src/sheetsClient');
 const { executarRodadaPedidosDasReservas } = require('./src/reservas');
 

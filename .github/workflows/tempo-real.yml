@@ -1,0 +1,47 @@
+name: ORGM - Atualização em Tempo Real
+
+on:
+  # Roda sozinho a cada 5 minutos. O GitHub não garante o minuto exato
+  # (pode atrasar um pouco em horários de pico da infraestrutura deles),
+  # mas não existe mais a cota diária que nos obrigava a rodar de 30 em 30
+  # minutos no Google Apps Script - 5 minutos é seguro aqui. Pra mudar o
+  # intervalo, edite só a expressão cron abaixo (mínimo permitido pelo
+  # GitHub é de 5 em 5 minutos).
+  schedule:
+    - cron: '*/5 * * * *'
+  # Permite rodar manualmente a qualquer momento, pelo botão "Run workflow"
+  # na aba Actions do repositório - equivalente ao antigo menu "Atualizar
+  # Estoque + Reservas + Separação (1 rodada)" do Apps Script.
+  workflow_dispatch: {}
+
+# Evita duas rodadas escrevendo na planilha ao mesmo tempo (equivalente ao
+# LockService do Apps Script): se uma rodada ainda estiver rodando quando a
+# próxima for disparada, a nova fica na fila em vez de rodar em paralelo.
+concurrency:
+  group: orgm-tempo-real
+  cancel-in-progress: false
+
+jobs:
+  rodada:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Baixar o código do repositório
+        uses: actions/checkout@v4
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Rodar Estoque -> Reservas x Pedidos -> Dashboards
+        env:
+          ORGM_TOKEN: ${{ secrets.ORGM_TOKEN }}
+          ORGM_EMPRESA_ID: ${{ secrets.ORGM_EMPRESA_ID }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: node index.js

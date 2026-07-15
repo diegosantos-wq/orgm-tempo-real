@@ -198,7 +198,6 @@ async function criarDashboardSeparacao(sheetsClient) {
     await sheetsClient.setNumberFormat(sheetId, linhaDadosTipo - 1, 2, listaLinhasTipo.length, 2, FORMATO_KG);
     await sheetsClient.setNumberFormat(sheetId, linhaDadosTipo - 1, 4, listaLinhasTipo.length, 1, FORMATO_PCT);
     await sheetsClient.setNumberFormat(sheetId, linhaDadosTipo - 1, 5, listaLinhasTipo.length, 1, FORMATO_KG);
-    await sheetsClient.addConditionalColorScale(sheetId, linhaDadosTipo - 1, 4, listaLinhasTipo.length, 1);
     linha = linhaDadosTipo + listaLinhasTipo.length;
   }
   linha += 2;
@@ -223,7 +222,6 @@ async function criarDashboardSeparacao(sheetsClient) {
     await sheetsClient.setNumberFormat(sheetId, linhaDadosAlmox - 1, 2, listaLinhasAlmox.length, 2, FORMATO_KG);
     await sheetsClient.setNumberFormat(sheetId, linhaDadosAlmox - 1, 4, listaLinhasAlmox.length, 1, FORMATO_PCT);
     await sheetsClient.setNumberFormat(sheetId, linhaDadosAlmox - 1, 5, listaLinhasAlmox.length, 1, FORMATO_KG);
-    await sheetsClient.addConditionalColorScale(sheetId, linhaDadosAlmox - 1, 4, listaLinhasAlmox.length, 1);
     linha = linhaDadosAlmox + listaLinhasAlmox.length;
   }
   linha += 2;
@@ -243,7 +241,6 @@ async function criarDashboardSeparacao(sheetsClient) {
     await sheetsClient.setNumberFormat(sheetId, linhaDadosOV - 1, 3, listaLinhasOV.length, 2, FORMATO_KG);
     await sheetsClient.setNumberFormat(sheetId, linhaDadosOV - 1, 5, listaLinhasOV.length, 1, FORMATO_PCT);
     await sheetsClient.setNumberFormat(sheetId, linhaDadosOV - 1, 6, listaLinhasOV.length, 1, FORMATO_KG);
-    await sheetsClient.addConditionalColorScale(sheetId, linhaDadosOV - 1, 5, listaLinhasOV.length, 1);
     linha = linhaDadosOV + listaLinhasOV.length;
   }
   linha += 2;
@@ -264,7 +261,6 @@ async function criarDashboardSeparacao(sheetsClient) {
     await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 3, listaLinhasOP.length, 2, FORMATO_KG);
     await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 5, listaLinhasOP.length, 1, FORMATO_PCT);
     await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 6, listaLinhasOP.length, 1, FORMATO_KG);
-    await sheetsClient.addConditionalColorScale(sheetId, linhaDadosOP - 1, 5, listaLinhasOP.length, 1);
   }
 
   await sheetsClient.autoResizeColumns(sheetId, 0, 7);

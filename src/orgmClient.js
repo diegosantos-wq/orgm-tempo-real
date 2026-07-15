@@ -12,7 +12,7 @@
  * direto no código.
  */
 
-const { temValorPreenchido, extrairDataDotNet } = require('./util');
+const { temValorPreenchido, extrairDataDotNet, sleep } = require('./util');
 
 const ENDPOINT_URL = 'https://ws4.workorgm.com/ICC/OrgmSiteWebservice.asmx/EndPointGet';
 const DOWNLOAD_URL = 'https://ws4.workorgm.com/ICC/OrgmSiteWebservice.asmx/DownloadAnexo';
@@ -45,9 +45,21 @@ function formEncode(obj) {
     .join('&');
 }
 
+// Quantas vezes tenta cada chamada antes de desistir, e quanto espera entre
+// tentativas. Existe porque descobrimos (via o "causa: UND_ERR_CONNECT_TIMEOUT"
+// no log) que a conexão com a ORGM às vezes trava só na etapa de exportar o
+// Estoque, mesmo com o mesmo token/empresa/endereço funcionando normalmente
+// na busca de reservas - ou seja, não é falta de configuração, parece ser
+// uma falha de rede intermitente (o GitHub Actions muda de IP a cada
+// execução, então às vezes a rota até a ORGM funciona, às vezes não).
+// Tentar de novo automaticamente cobre esse caso sem precisar de ação manual.
+const TENTATIVAS_FETCH = 3;
+const ESPERA_ENTRE_TENTATIVAS_MS = 3000;
+
 /**
- * Wrapper em volta do fetch nativo que anexa a causa raiz (err.cause) na
- * mensagem de erro. O fetch do Node (undici) joga um "TypeError: fetch
+ * Wrapper em volta do fetch nativo que (1) tenta de novo em caso de falha de
+ * rede (ver TENTATIVAS_FETCH acima) e (2) anexa a causa raiz (err.cause) na
+ * mensagem de erro final. O fetch do Node (undici) joga um "TypeError: fetch
  * failed" genérico pra qualquer falha de rede - o motivo de verdade
  * (timeout, DNS, conexão recusada, certificado, IP bloqueado, etc.) fica só
  * em err.cause, que se perde se a gente só faz `'texto: ' + e` (que é
@@ -56,16 +68,24 @@ function formEncode(obj) {
  * então não tem problema aparecer no log de um repositório público.
  */
 async function fetchComDiagnostico(url, options) {
-  try {
-    return await fetch(url, options);
-  } catch (e) {
-    const causa = e && e.cause ? (e.cause.code || e.cause.message || String(e.cause)) : null;
-    const erroDetalhado = new Error(
-      (e && e.message ? e.message : String(e)) + (causa ? ' | causa: ' + causa : ' | (sem causa detalhada disponível)')
-    );
-    erroDetalhado.original = e;
-    throw erroDetalhado;
+  let ultimoErro;
+  for (let tentativa = 1; tentativa <= TENTATIVAS_FETCH; tentativa++) {
+    try {
+      return await fetch(url, options);
+    } catch (e) {
+      const causa = e && e.cause ? (e.cause.code || e.cause.message || String(e.cause)) : null;
+      ultimoErro = new Error(
+        (e && e.message ? e.message : String(e)) +
+          (causa ? ' | causa: ' + causa : ' | (sem causa detalhada disponível)') +
+          ` | tentativa ${tentativa}/${TENTATIVAS_FETCH}`
+      );
+      ultimoErro.original = e;
+      if (tentativa < TENTATIVAS_FETCH) {
+        await sleep(ESPERA_ENTRE_TENTATIVAS_MS);
+      }
+    }
   }
+  throw ultimoErro;
 }
 
 /**

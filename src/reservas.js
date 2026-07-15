@@ -23,7 +23,7 @@ const {
   podarBinsNaoReservados,
   aplicarResultadoLote,
 } = require('./reservasLogica');
-const { sleep } = require('./util');
+const { sleep, agoraBrasilia } = require('./util');
 
 const NOME_ABA_RESERVAS = 'Reservas x Pedidos';
 
@@ -109,7 +109,7 @@ async function executarRodadaPedidosDasReservas(sheetsClient) {
   podarBinsNaoReservados(mapaLinhasPorBin, binsReservados);
 
   await sheetsClient.setValues(NOME_ABA_RESERVAS, 'A1:B1', [['Reservas x Pedidos (Ordem de Venda) - por BIN', '']]);
-  await sheetsClient.setValues(NOME_ABA_RESERVAS, 'A2:B2', [['Atualizado em:', new Date().toLocaleString('pt-BR')]]);
+  await sheetsClient.setValues(NOME_ABA_RESERVAS, 'A2:B2', [['Atualizado em:', agoraBrasilia()]]);
   await sheetsClient.setValues(NOME_ABA_RESERVAS, a1Range(4, 1, 1, colunas.length), [colunas]);
   const sheetIdReservas = await sheetsClient.getSheetId(NOME_ABA_RESERVAS);
   await sheetsClient.setFont(sheetIdReservas, 0, 0, 1, 1, { size: 14, bold: true });
@@ -210,7 +210,7 @@ async function executarRodadaPedidosDasReservas(sheetsClient) {
       (terminouTudo
         ? 'Status: em dia - nenhum BIN pendente de conferência'
         : `Status: ${backlogRestante} BIN(s) ainda pendente(s) de conferência` + (falhaGeral ? ' (falha de rede/ORGM)' : '')) +
-        ` - última rodada em ${new Date().toLocaleString('pt-BR')}.`,
+        ` - última rodada em ${agoraBrasilia()}.`,
     ],
   ]);
   await sheetsClient.setFont(sheetIdReservas, 2, 0, 1, 1, { italic: true, color: '#666666' });

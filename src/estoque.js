@@ -81,6 +81,12 @@ async function executarAtualizacaoDeEstoque(sheetsClient) {
     );
   }
 
+  // Importante: envia as escritas acumuladas AGORA, porque quem chama esta
+  // função (reservas.js) faz um getValues('Estoque') logo em seguida - se
+  // não desse flush aqui, essa leitura veria a aba desatualizada (as
+  // escritas ficam só enfileiradas até flush() ser chamado).
+  await sheetsClient.flush();
+
   return { linhas };
 }
 

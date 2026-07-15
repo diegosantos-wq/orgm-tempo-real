@@ -15,7 +15,7 @@
 
 const XLSX = require('xlsx');
 const orgm = require('./orgmClient');
-const { corrigirColunaLocal, sleep } = require('./util');
+const { corrigirColunaLocal, sleep, agoraBrasilia } = require('./util');
 
 const NOME_ABA_ESTOQUE = 'Estoque';
 
@@ -77,7 +77,7 @@ async function executarAtualizacaoDeEstoque(sheetsClient) {
     await sheetsClient.setValues(
       NOME_ABA_ESTOQUE,
       `${colunaNota}1:${colunaNota}1`,
-      [['Atualizado em: ' + new Date().toLocaleString('pt-BR')]]
+      [['Atualizado em: ' + agoraBrasilia()]]
     );
   }
 

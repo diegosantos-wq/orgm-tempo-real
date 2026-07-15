@@ -80,6 +80,21 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Data/hora atual formatada no fuso de Brasília (America/Sao_Paulo), no
+ * padrão pt-BR (dd/mm/aaaa, hh:mm:ss).
+ *
+ * Importante: o GitHub Actions roda os runners em UTC. `new Date().toLocaleString('pt-BR')`
+ * sem especificar o fuso só formata os SEPARADORES no padrão brasileiro
+ * (barra, vírgula), mas continua usando o horário UTC por baixo - por isso
+ * os "Atualizado em" ficavam ~3h à frente do horário real de Brasília. Toda
+ * gravação de timestamp na planilha deve usar esta função em vez de chamar
+ * toLocaleString direto.
+ */
+function agoraBrasilia() {
+  return new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+}
+
 module.exports = {
   temValorPreenchido,
   extrairOcPc,
@@ -90,4 +105,5 @@ module.exports = {
   extrairDataDotNet,
   localJaSeparado,
   sleep,
+  agoraBrasilia,
 };

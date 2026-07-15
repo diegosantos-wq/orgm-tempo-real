@@ -250,8 +250,16 @@ class SheetsClient {
   }
 
   /**
-   * Escala de cor vermelho -> amarelo -> verde numa coluna de % (0 a 1),
+   * Escala de cor vermelho -> verde numa coluna de % (0 a 1),
    * igual aplicarEscalaCorPercentual_ no .gs original.
+   *
+   * Observação: o ponto do meio (amarelo, NUMBER/0.5) foi removido porque a
+   * API do Google Sheets rejeitava esse valor decimal com o erro "Invalid
+   * InterpolationType.value: 0.5" (os exemplos oficiais da documentação só
+   * usam valores inteiros, ex. "0"/"256"). Uma escala de 2 pontos (MIN -> MAX)
+   * é o padrão mais simples e documentado pelo Google, e evita esse problema
+   * por completo - ainda fica vermelho no 0% e verde no 100%, só sem o
+   * amarelo no meio.
    */
   async addConditionalColorScale(sheetId, rowStart, colStart, numRows, numCols) {
     await this.batchUpdate([
@@ -261,7 +269,6 @@ class SheetsClient {
             ranges: [this._range(sheetId, rowStart, colStart, numRows, numCols)],
             gradientRule: {
               minpoint: { color: hexToRgb('#c5221f'), type: 'MIN' },
-              midpoint: { color: hexToRgb('#fbbc04'), type: 'NUMBER', value: '0.5' },
               maxpoint: { color: hexToRgb('#137333'), type: 'MAX' },
             },
           },

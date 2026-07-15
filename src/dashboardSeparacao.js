@@ -9,7 +9,7 @@
  */
 
 const { colIndexToLetter } = require('./sheetsClient');
-const { localJaSeparado } = require('./util');
+const { localJaSeparado, agoraBrasilia } = require('./util');
 
 const NOME_ABA_RESERVAS = 'Reservas x Pedidos';
 const NOME_ABA_DASHBOARD_SEPARACAO = 'Dashboard Separação';
@@ -132,7 +132,7 @@ async function criarDashboardSeparacao(sheetsClient) {
 
   await sheetsClient.setValues(NOME_ABA_DASHBOARD_SEPARACAO, 'A1:A1', [['Dashboard de Separação (Picking) - ORGM']]);
   await sheetsClient.setFont(sheetId, 0, 0, 1, 1, { size: 16, bold: true });
-  await sheetsClient.setValues(NOME_ABA_DASHBOARD_SEPARACAO, 'A2:B2', [['Atualizado em:', new Date().toLocaleString('pt-BR')]]);
+  await sheetsClient.setValues(NOME_ABA_DASHBOARD_SEPARACAO, 'A2:B2', [['Atualizado em:', agoraBrasilia()]]);
   await sheetsClient.setValues(NOME_ABA_DASHBOARD_SEPARACAO, 'A3:A3', [
     ['Regra: Local começando com "Z" = já separado. Qualquer outro Local = aguardando separação.'],
   ]);

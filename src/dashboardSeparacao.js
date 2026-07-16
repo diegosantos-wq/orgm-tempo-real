@@ -13,6 +13,59 @@ const { localJaSeparado, agoraBrasilia } = require('./util');
 
 const NOME_ABA_RESERVAS = 'Reservas x Pedidos';
 const NOME_ABA_DASHBOARD_SEPARACAO = 'Dashboard Separação';
+
+// Aba manual (mantida pelo usuário, com uma fórmula IMPORTRANGE) que traz
+// OBS + Status + OP + VOLUME da planilha "Planejamento Fabrica 2026" (aba
+// "Ribbon Blender Jundiaí") pra dentro desta planilha. Só é LIDA aqui - o
+// código nunca limpa nem escreve nela, é 100% gerenciada pelo usuário.
+const NOME_ABA_STATUS_OP_IMPORT = 'StatusOP_Import';
+
+/**
+ * Lê a aba "StatusOP_Import" (cabeçalho na linha 1, com pelo menos as
+ * colunas "OP", "Status", "OBS" e "VOLUME" - em qualquer ordem, busca pelo
+ * NOME do cabeçalho, não pela posição) e monta um mapa
+ * OP -> { obs, status, volume }. Se a aba ainda não existir ou estiver
+ * vazia/quebrada (ex.: IMPORTRANGE ainda não autorizado), devolve um mapa
+ * vazio e só loga um aviso - nunca derruba o resto do dashboard por causa
+ * disso.
+ */
+async function carregarDadosOpJundiai(sheetsClient) {
+  const dadosPorOp = {};
+  try {
+    const dados = await sheetsClient.getValues(NOME_ABA_STATUS_OP_IMPORT);
+    if (!dados.length) return dadosPorOp;
+    const cabecalho = dados[0] || [];
+    const idx = {
+      obs: cabecalho.indexOf('OBS'),
+      status: cabecalho.indexOf('Status'),
+      op: cabecalho.indexOf('OP'),
+      volume: cabecalho.indexOf('VOLUME'),
+    };
+    if (idx.op < 0) {
+      console.log(
+        `criarDashboardSeparacao: aba "${NOME_ABA_STATUS_OP_IMPORT}" sem coluna "OP" no cabeçalho - ` +
+          'confira o IMPORTRANGE (precisa incluir a coluna OP da "Ribbon Blender Jundiaí").'
+      );
+      return dadosPorOp;
+    }
+    for (let i = 1; i < dados.length; i++) {
+      const linha = dados[i] || [];
+      const op = linha[idx.op];
+      if (op === '' || op === null || op === undefined) continue;
+      dadosPorOp[String(op).trim()] = {
+        obs: idx.obs >= 0 ? linha[idx.obs] || '' : '',
+        status: idx.status >= 0 ? linha[idx.status] || '' : '',
+        volume: idx.volume >= 0 ? linha[idx.volume] || '' : '',
+      };
+    }
+  } catch (e) {
+    console.log(
+      `criarDashboardSeparacao: não consegui ler a aba "${NOME_ABA_STATUS_OP_IMPORT}" (dados da Jundiaí por OP) - ` +
+        `as colunas OBS/Status/Volume na tabela "Por Pedido OP" vão ficar em branco. Detalhe: ${(e && e.message) || e}`
+    );
+  }
+  return dadosPorOp;
+}
 const FORMATO_KG = '#,##0.00 "kg"';
 const FORMATO_PCT = '0.0%';
 
@@ -52,6 +105,8 @@ function montarListaPorPedido(mapaPorPedido) {
 }
 
 async function criarDashboardSeparacao(sheetsClient) {
+  const dadosOpJundiai = await carregarDadosOpJundiai(sheetsClient);
+
   const dadosReservas = await sheetsClient.getValues(NOME_ABA_RESERVAS);
   if (!dadosReservas.length || dadosReservas.length < 5) {
     console.log('criarDashboardSeparacao: abortado, aba "Reservas x Pedidos" ainda vazia ou inexistente.');
@@ -246,24 +301,34 @@ async function criarDashboardSeparacao(sheetsClient) {
   linha += 2;
 
   // --- Por Pedido (OP) ---
+  // 3 colunas extras só nesta tabela (OBS, Status, Volume Planejado) - vêm
+  // da aba "StatusOP_Import" (ver carregarDadosOpJundiai acima), cruzando
+  // pelo número da OP. Se a OP não aparecer lá (ex.: não é da linha
+  // Jundiaí), ficam em branco.
   const colunasPorPedidoOP = colunasPorPedidoOV.slice();
   colunasPorPedidoOP[0] = 'OP';
+  colunasPorPedidoOP.push('OBS (Jundiaí)', 'Status (Jundiaí)', 'Volume Planejado (Jundiaí)');
+  const NUM_COLUNAS_OP = colunasPorPedidoOP.length; // 10
+  const listaLinhasOPComDados = listaLinhasOP.map((linhaOp) => {
+    const dados = dadosOpJundiai[String(linhaOp[0]).trim()];
+    return linhaOp.concat([dados ? dados.obs : '', dados ? dados.status : '', dados ? dados.volume : '']);
+  });
   await sheetsClient.setValues(NOME_ABA_DASHBOARD_SEPARACAO, a1(linha, 1), [['Separação por Pedido - OP (Ordem de Produção), individual']]);
   await sheetsClient.setFont(sheetId, linha - 1, 0, 1, 1, { bold: true });
   linha++;
-  await sheetsClient.setValues(NOME_ABA_DASHBOARD_SEPARACAO, a1Range(linha, 1, 1, 7), [colunasPorPedidoOP]);
-  await sheetsClient.setFont(sheetId, linha - 1, 0, 1, 7, { bold: true });
+  await sheetsClient.setValues(NOME_ABA_DASHBOARD_SEPARACAO, a1Range(linha, 1, 1, NUM_COLUNAS_OP), [colunasPorPedidoOP]);
+  await sheetsClient.setFont(sheetId, linha - 1, 0, 1, NUM_COLUNAS_OP, { bold: true });
   const linhaDadosOP = linha + 1;
   linha++;
-  if (listaLinhasOP.length) {
-    await sheetsClient.setValues(NOME_ABA_DASHBOARD_SEPARACAO, a1Range(linhaDadosOP, 1, listaLinhasOP.length, 7), listaLinhasOP);
-    await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 2, listaLinhasOP.length, 1, '#,##0');
-    await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 3, listaLinhasOP.length, 2, FORMATO_KG);
-    await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 5, listaLinhasOP.length, 1, FORMATO_PCT);
-    await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 6, listaLinhasOP.length, 1, FORMATO_KG);
+  if (listaLinhasOPComDados.length) {
+    await sheetsClient.setValues(NOME_ABA_DASHBOARD_SEPARACAO, a1Range(linhaDadosOP, 1, listaLinhasOPComDados.length, NUM_COLUNAS_OP), listaLinhasOPComDados);
+    await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 2, listaLinhasOPComDados.length, 1, '#,##0');
+    await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 3, listaLinhasOPComDados.length, 2, FORMATO_KG);
+    await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 5, listaLinhasOPComDados.length, 1, FORMATO_PCT);
+    await sheetsClient.setNumberFormat(sheetId, linhaDadosOP - 1, 6, listaLinhasOPComDados.length, 1, FORMATO_KG);
   }
 
-  await sheetsClient.autoResizeColumns(sheetId, 0, 7);
+  await sheetsClient.autoResizeColumns(sheetId, 0, NUM_COLUNAS_OP);
 
   // Envia tudo que foi enfileirado (setValues/setFont/setNumberFormat/escala
   // de cor) numa única leva - ver comentário em flush() no sheetsClient.

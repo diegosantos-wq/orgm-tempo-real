@@ -14,18 +14,26 @@
 const COLUNAS_RESERVAS = [
   'Almoxarifado', 'BIN', 'Item', 'TipoPedido', 'Pedido', 'OrdemVenda',
   'OrdemProducao', 'PosicaoOP', 'Qtde', 'Baixado', 'wrkID', 'Local',
-  'Lote_Interno', 'LocalFisico',
+  'Lote_Interno',
 ];
 
 /**
  * A partir das linhas da aba "Estoque", monta:
  *   - almoxarifadoPorBin: BIN -> Almoxarifado da divisão que tem reserva
  *     (prioriza reservado > 0; se nenhuma divisão tiver, fica com a última vista)
+ *   - localPorBin: BIN -> Local (endereço físico atual) da MESMA divisão
+ *     escolhida acima. Importante: a busca "Bin Historico" da ORGM (usada só
+ *     pra achar a OV/OP de cada BIN) devolve um Local desatualizado - não
+ *     reflete quando o BIN foi fisicamente movido pra um endereço de
+ *     separação (Z...). O Estoque é reexportado a cada rodada direto da
+ *     ORGM, então o Local dele é sempre o endereço físico atual - por isso
+ *     esse é a fonte de verdade pro Local, nunca o que vem da busca por BIN.
  *   - reservadoPorBinComEstoque: BIN -> soma do Reservado em TODAS as divisões
  *   - binsReservados / listaBins: só BINs com Reservado > 0 em alguma divisão
  */
 function construirMapasEstoque(linhasEstoque, idx) {
   const almoxarifadoPorBin = {};
+  const localPorBin = {};
   const reservadoPorBinComEstoque = {};
   const binsReservados = {};
   linhasEstoque.forEach((linha) => {
@@ -35,6 +43,9 @@ function construirMapasEstoque(linhasEstoque, idx) {
       const chaveBin = String(bin);
       if (almoxarifadoPorBin[chaveBin] === undefined || reservado > 0) {
         almoxarifadoPorBin[chaveBin] = linha[idx.almoxarifado];
+        if (idx.local !== undefined) {
+          localPorBin[chaveBin] = linha[idx.local];
+        }
       }
       reservadoPorBinComEstoque[chaveBin] = (reservadoPorBinComEstoque[chaveBin] || 0) + reservado;
     }
@@ -43,7 +54,7 @@ function construirMapasEstoque(linhasEstoque, idx) {
     }
   });
   const listaBins = Object.keys(binsReservados).sort();
-  return { almoxarifadoPorBin, reservadoPorBinComEstoque, binsReservados, listaBins };
+  return { almoxarifadoPorBin, localPorBin, reservadoPorBinComEstoque, binsReservados, listaBins };
 }
 
 function calcularBinsParaConsultar(listaBins, estadoConferidoPorBin, reservadoPorBinComEstoque) {
@@ -68,6 +79,7 @@ function aplicarResultadoLote({
   resultadosLote,
   loteBins,
   almoxarifadoPorBin,
+  localPorBin,
   reservadoPorBinComEstoque,
   mapaLinhasPorBin,
   estadoConferidoPorBin,
@@ -105,6 +117,14 @@ function aplicarResultadoLote({
 
     const linhasDoBin = reservasAtivas.map((obj) => {
       obj.Almoxarifado = almoxarifadoPorBin[chaveBinConsultado];
+      // O "Local" que vem da própria busca por BIN (Bin Historico) é
+      // desatualizado - não pega quando o BIN foi movido pra um endereço de
+      // separação (Z...). Sempre sobrescreve com o Local do Estoque (a
+      // fonte de verdade, reexportada a cada rodada), igual já se fazia com
+      // o Almoxarifado acima.
+      if (localPorBin && localPorBin[chaveBinConsultado] !== undefined) {
+        obj.Local = localPorBin[chaveBinConsultado];
+      }
       return colunas.map((col) => (obj[col] !== undefined ? obj[col] : ''));
     });
 

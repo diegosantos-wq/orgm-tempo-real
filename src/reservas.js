@@ -64,12 +64,20 @@ async function executarRodadaPedidosDasReservas(sheetsClient) {
     bin: cabecalhoEstoque.indexOf('BIN'),
     reservado: cabecalhoEstoque.indexOf('Reservado'),
     almoxarifado: cabecalhoEstoque.indexOf('Almoxarifado'),
+    local: cabecalhoEstoque.indexOf('Local'),
   };
   if (idx.bin < 0) idx.bin = 1;
   if (idx.reservado < 0) idx.reservado = 6;
   if (idx.almoxarifado < 0) idx.almoxarifado = 0;
+  if (idx.local < 0) idx.local = 2;
 
-  const { almoxarifadoPorBin, reservadoPorBinComEstoque, binsReservados, listaBins } = construirMapasEstoque(linhasEstoque, idx);
+  // localPorBin vem do Estoque (reexportado a cada rodada direto da ORGM) -
+  // é a fonte de verdade do endereço físico atual do BIN, ao contrário do
+  // Local que a busca "Bin Historico" devolve (esse fica desatualizado
+  // quando o BIN é movido pra um endereço de separação, Z...). Ver comentário
+  // completo em reservasLogica.js.
+  const { almoxarifadoPorBin, localPorBin, reservadoPorBinComEstoque, binsReservados, listaBins } =
+    construirMapasEstoque(linhasEstoque, idx);
 
   if (!listaBins.length) {
     console.log('executarRodadaPedidosDasReservas: abortado, nenhum BIN com Reservado > 0.');
@@ -134,6 +142,7 @@ async function executarRodadaPedidosDasReservas(sheetsClient) {
         resultadosLote,
         loteBins,
         almoxarifadoPorBin,
+        localPorBin,
         reservadoPorBinComEstoque,
         mapaLinhasPorBin,
         estadoConferidoPorBin,

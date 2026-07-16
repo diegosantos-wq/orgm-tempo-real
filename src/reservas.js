@@ -90,12 +90,20 @@ async function executarRodadaPedidosDasReservas(sheetsClient) {
   const colunas = COLUNAS_RESERVAS;
   await sheetsClient.ensureSheet(NOME_ABA_RESERVAS);
 
-  // Verifica se o cabeçalho salvo (linha 4) ainda bate com "colunas".
+  // Verifica se o cabeçalho salvo (linha 4) ainda bate com "colunas" - tanto
+  // no conteúdo quanto na QUANTIDADE de colunas. Importante checar o
+  // tamanho: se "colunas" mudar (por ex. uma coluna for removida, como
+  // aconteceu com "LocalFisico"), comparar só o conteúdo das primeiras N
+  // posições dava "válido" mesmo com o cabeçalho antigo tendo colunas extras
+  // sobrando - aí linhas antigas (mais longas) ficavam misturadas com linhas
+  // novas (mais curtas) no upsert por BIN abaixo, e o Sheets rejeitava a
+  // escrita inteira por causa da linha desalinhada.
   const dadosReservas = await sheetsClient.getValues(NOME_ABA_RESERVAS);
   let cabecalhoValido = false;
   if (dadosReservas.length >= 4) {
     const cabecalhoAtual = dadosReservas[3] || [];
-    cabecalhoValido = colunas.every((col, i) => cabecalhoAtual[i] === col);
+    cabecalhoValido =
+      cabecalhoAtual.length === colunas.length && colunas.every((col, i) => cabecalhoAtual[i] === col);
   }
   if (!cabecalhoValido) {
     await sheetsClient.clearValues(NOME_ABA_RESERVAS);
@@ -108,7 +116,11 @@ async function executarRodadaPedidosDasReservas(sheetsClient) {
   const mapaLinhasPorBin = {};
   if (cabecalhoValido && dadosReservas.length > 4) {
     for (let i = 4; i < dadosReservas.length; i++) {
-      const linha = dadosReservas[i];
+      // Corta/preenche pra ter sempre exatamente "colunas.length" células -
+      // proteção extra pro Sheets nunca receber linhas de tamanhos
+      // diferentes numa mesma escrita (o que faz a API rejeitar tudo).
+      const linha = dadosReservas[i].slice(0, colunas.length);
+      while (linha.length < colunas.length) linha.push('');
       const chaveBinExistente = String(linha[1]); // coluna B = BIN
       if (!mapaLinhasPorBin[chaveBinExistente]) mapaLinhasPorBin[chaveBinExistente] = [];
       mapaLinhasPorBin[chaveBinExistente].push(linha);

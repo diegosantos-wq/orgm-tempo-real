@@ -73,7 +73,7 @@ teste('localJaSeparado só é true pra Local começando com Z', () => {
 
 teste('colIndexToLetter converte índice 0-based pra letra de coluna', () => {
   assert.strictEqual(colIndexToLetter(0), 'A');
-  assert.strictEqual(colIndexToLetter(13), 'N'); // 14 colunas em COLUNAS_RESERVAS
+  assert.strictEqual(colIndexToLetter(12), 'M'); // 13 colunas em COLUNAS_RESERVAS
   assert.strictEqual(colIndexToLetter(25), 'Z');
   assert.strictEqual(colIndexToLetter(26), 'AA');
 });
@@ -84,13 +84,14 @@ teste('construirMapasEstoque usa o Almoxarifado da divisão que TEM reserva, e s
   // Cenário real reportado: BIN 10077693 com 1250kg reservados no total,
   // mas partido em duas linhas de Estoque - uma em AVARIAJ1 (sem reserva) e
   // outra no Almoxarifado normal (com a reserva de verdade).
-  const idx = { bin: 1, reservado: 6, almoxarifado: 0 };
+  const idx = { bin: 1, reservado: 6, almoxarifado: 0, local: 7 };
   const linhasEstoque = [
-    ['AVARIAJ1', '10077693', 'ITEM1', 'desc', 500, 0, 0], // divisão sem reserva
-    ['ALMOX-01', '10077693', 'ITEM1', 'desc', 750, 1250, 1250], // divisão com a reserva real
+    ['AVARIAJ1', '10077693', 'ITEM1', 'desc', 500, 0, 0, '02A01'], // divisão sem reserva
+    ['ALMOX-01', '10077693', 'ITEM1', 'desc', 750, 1250, 1250, 'Z05B02'], // divisão com a reserva real
   ];
-  const { almoxarifadoPorBin, reservadoPorBinComEstoque, listaBins } = construirMapasEstoque(linhasEstoque, idx);
+  const { almoxarifadoPorBin, localPorBin, reservadoPorBinComEstoque, listaBins } = construirMapasEstoque(linhasEstoque, idx);
   assert.strictEqual(almoxarifadoPorBin['10077693'], 'ALMOX-01', 'deve pegar o Almoxarifado da divisão com reserva, não a primeira que aparecer');
+  assert.strictEqual(localPorBin['10077693'], 'Z05B02', 'deve pegar o Local da mesma divisão com reserva (endereço físico atual), não a primeira que aparecer');
   assert.strictEqual(reservadoPorBinComEstoque['10077693'], 1250, 'deve somar o Reservado das duas divisões, não duplicar nem ficar só com uma');
   assert.deepStrictEqual(listaBins, ['10077693']);
 });
@@ -115,8 +116,8 @@ teste('aplicarResultadoLote conta só reservas ativas (Baixado != 1) e não divi
     {
       ok: true,
       linhas: [
-        { BIN: '123', Item: 'X', TipoPedido: 'OV', Pedido: '555', OrdemVenda: '555', OrdemProducao: '', Qtde: 800, Baixado: 0 },
-        { BIN: '123', Item: 'X', TipoPedido: 'OV', Pedido: '444', OrdemVenda: '444', OrdemProducao: '', Qtde: 300, Baixado: 1 }, // já executada - não deve contar
+        { BIN: '123', Item: 'X', TipoPedido: 'OV', Pedido: '555', OrdemVenda: '555', OrdemProducao: '', Qtde: 800, Baixado: 0, Local: '03A01' },
+        { BIN: '123', Item: 'X', TipoPedido: 'OV', Pedido: '444', OrdemVenda: '444', OrdemProducao: '', Qtde: 300, Baixado: 1, Local: '03A01' }, // já executada - não deve contar
       ],
     },
   ];
@@ -124,6 +125,7 @@ teste('aplicarResultadoLote conta só reservas ativas (Baixado != 1) e não divi
     resultadosLote,
     loteBins: ['123'],
     almoxarifadoPorBin: { 123: 'ALMOX-01' },
+    localPorBin: { 123: 'Z09C03' },
     reservadoPorBinComEstoque: { 123: 800 },
     mapaLinhasPorBin,
     estadoConferidoPorBin,
@@ -133,7 +135,13 @@ teste('aplicarResultadoLote conta só reservas ativas (Baixado != 1) e não divi
   assert.strictEqual(binsSemReservaAtiva, 0);
   const linhaGravada = mapaLinhasPorBin['123'][0];
   const colQtde = COLUNAS_RESERVAS.indexOf('Qtde');
+  const colLocal = COLUNAS_RESERVAS.indexOf('Local');
   assert.strictEqual(linhaGravada[colQtde], 800, 'a Qtde tem que ser o valor cheio (800), nunca dividido por nada');
+  assert.strictEqual(
+    linhaGravada[colLocal],
+    'Z09C03',
+    'o Local gravado tem que vir do Estoque (localPorBin), nunca do Local devolvido pela busca por BIN - esse fica desatualizado quando o BIN é movido pra um endereço de separação'
+  );
   assert.strictEqual(estadoConferidoPorBin['123'], 800);
 });
 
@@ -146,6 +154,7 @@ teste('aplicarResultadoLote marca binsSemReservaAtiva quando só sobram reservas
     resultadosLote,
     loteBins: ['456'],
     almoxarifadoPorBin: {},
+    localPorBin: {},
     reservadoPorBinComEstoque: { 456: 0 },
     mapaLinhasPorBin,
     estadoConferidoPorBin: {},
@@ -162,6 +171,7 @@ teste('aplicarResultadoLote não mexe no mapa quando a consulta falhou (ok=false
     resultadosLote,
     loteBins: ['789'],
     almoxarifadoPorBin: {},
+    localPorBin: {},
     reservadoPorBinComEstoque: { 789: 42 },
     mapaLinhasPorBin,
     estadoConferidoPorBin,

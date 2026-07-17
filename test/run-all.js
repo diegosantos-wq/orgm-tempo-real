@@ -21,6 +21,7 @@ const {
   construirMapasEstoque,
   calcularBinsParaConsultar,
   podarBinsNaoReservados,
+  atualizarLocalDeTodosOsBins,
   aplicarResultadoLote,
   COLUNAS_RESERVAS,
 } = require('../src/reservasLogica');
@@ -178,6 +179,52 @@ teste('aplicarResultadoLote não mexe no mapa quando a consulta falhou (ok=false
   });
   assert.deepStrictEqual(mapaLinhasPorBin['789'], [['linha-preservada']], 'falha pontual não pode apagar dado já confirmado');
   assert.strictEqual(estadoConferidoPorBin['789'], 42, 'estado conferido não deve mudar numa falha pontual');
+});
+
+// --- reservasLogica.js: bug do Local congelado quando o BIN muda de
+// endereço SEM a quantidade reservada mudar (caso do OP 25786) ---
+
+teste('atualizarLocalDeTodosOsBins atualiza o Local de um BIN mesmo que ele não tenha sido reconsultado nesta rodada', () => {
+  const colQtde = COLUNAS_RESERVAS.indexOf('Qtde');
+  const colLocal = COLUNAS_RESERVAS.indexOf('Local');
+  const colAlmox = COLUNAS_RESERVAS.indexOf('Almoxarifado');
+
+  // BIN '321' já tinha uma linha gravada numa rodada anterior, com Local
+  // ainda no endereço de armazém antigo ('03A01'). Nesta rodada, a
+  // quantidade reservada NÃO mudou (por isso calcularBinsParaConsultar não
+  // o selecionaria pra reconsultar na ORGM), mas o Estoque já mostra que ele
+  // foi fisicamente movido pra um endereço de separação ('Z07C01').
+  const linhaAntiga = COLUNAS_RESERVAS.map(() => '');
+  linhaAntiga[colQtde] = 800;
+  linhaAntiga[colLocal] = '03A01';
+  linhaAntiga[colAlmox] = 'ALMOX-01';
+  const mapaLinhasPorBin = { 321: [linhaAntiga] };
+
+  atualizarLocalDeTodosOsBins(
+    mapaLinhasPorBin,
+    { 321: 'ALMOX-01' },
+    { 321: 'Z07C01' },
+    COLUNAS_RESERVAS
+  );
+
+  assert.strictEqual(
+    mapaLinhasPorBin['321'][0][colLocal],
+    'Z07C01',
+    'o Local deve ser atualizado pro endereço de separação atual mesmo sem reconsulta à ORGM nesta rodada'
+  );
+  assert.strictEqual(mapaLinhasPorBin['321'][0][colAlmox], 'ALMOX-01');
+  assert.strictEqual(mapaLinhasPorBin['321'][0][colQtde], 800, 'Qtde não deve ser mexida por esta função');
+});
+
+teste('atualizarLocalDeTodosOsBins não mexe em BINs que não têm mais dado nenhum no Estoque desta rodada', () => {
+  const colLocal = COLUNAS_RESERVAS.indexOf('Local');
+  const linha = COLUNAS_RESERVAS.map(() => '');
+  linha[colLocal] = '04B02';
+  const mapaLinhasPorBin = { 999: [linha] };
+
+  atualizarLocalDeTodosOsBins(mapaLinhasPorBin, {}, {}, COLUNAS_RESERVAS);
+
+  assert.strictEqual(mapaLinhasPorBin['999'][0][colLocal], '04B02', 'sem dado novo no Estoque, o Local não deve ser apagado nem alterado');
 });
 
 // --- delta / upsert ---

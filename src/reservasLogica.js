@@ -71,6 +71,40 @@ function podarBinsNaoReservados(mapa, binsReservados) {
 }
 
 /**
+ * Atualiza Almoxarifado e Local de TODAS as linhas já existentes em
+ * mapaLinhasPorBin (não só das que foram reconsultadas na ORGM nesta
+ * rodada), usando os mapas frescos vindos do Estoque desta mesma rodada.
+ *
+ * Por que isso é necessário: calcularBinsParaConsultar só marca um BIN pra
+ * reconsultar na ORGM quando o Reservado (quantidade) muda - mas um BIN pode
+ * ser fisicamente movido pra um endereço de separação (Z...) SEM a
+ * quantidade reservada mudar (é exatamente o caso normal: mesma reserva,
+ * só troca de lugar no galpão). Sem este passo, o Local de um BIN assim
+ * fica congelado no valor de quando ele foi consultado pela última vez,
+ * mesmo rodadas depois dele já ter sido fisicamente separado - fazendo o
+ * "% já separado" ficar defasado indefinidamente pra esses BINs.
+ *
+ * Como o Estoque já é reexportado do zero a cada rodada (não custa nenhuma
+ * chamada extra à ORGM), dá pra aplicar isso em toda linha existente, de
+ * graça, mutando mapaLinhasPorBin in place.
+ */
+function atualizarLocalDeTodosOsBins(mapaLinhasPorBin, almoxarifadoPorBin, localPorBin, colunas = COLUNAS_RESERVAS) {
+  const idxAlmoxarifado = colunas.indexOf('Almoxarifado');
+  const idxLocal = colunas.indexOf('Local');
+  if (idxAlmoxarifado < 0 && idxLocal < 0) return;
+
+  Object.keys(mapaLinhasPorBin).forEach((chaveBin) => {
+    const almox = almoxarifadoPorBin[chaveBin];
+    const local = localPorBin[chaveBin];
+    if (almox === undefined && local === undefined) return;
+    mapaLinhasPorBin[chaveBin].forEach((linha) => {
+      if (idxAlmoxarifado >= 0 && almox !== undefined) linha[idxAlmoxarifado] = almox;
+      if (idxLocal >= 0 && local !== undefined) linha[idxLocal] = local;
+    });
+  });
+}
+
+/**
  * Aplica o resultado (já resolvido, sem I/O) de um lote de BINs consultados,
  * mutando mapaLinhasPorBin e estadoConferidoPorBin in place. Devolve
  * estatísticas da rodada.
@@ -144,5 +178,6 @@ module.exports = {
   construirMapasEstoque,
   calcularBinsParaConsultar,
   podarBinsNaoReservados,
+  atualizarLocalDeTodosOsBins,
   aplicarResultadoLote,
 };

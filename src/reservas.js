@@ -21,6 +21,7 @@ const {
   construirMapasEstoque,
   calcularBinsParaConsultar,
   podarBinsNaoReservados,
+  atualizarLocalDeTodosOsBins,
   aplicarResultadoLote,
 } = require('./reservasLogica');
 const { sleep, agoraBrasilia } = require('./util');
@@ -183,6 +184,17 @@ async function executarRodadaPedidosDasReservas(sheetsClient) {
   }
 
   await salvarEstadoConferidoPorBin(sheetsClient, estadoConferidoPorBin);
+
+  // Atualiza Almoxarifado/Local de TODOS os BINs já existentes em
+  // mapaLinhasPorBin - não só dos que foram reconsultados na ORGM nesta
+  // rodada acima. Isso cobre o caso normal de um BIN ser fisicamente movido
+  // pra um endereço de separação (Z...) SEM a quantidade reservada mudar:
+  // sem este passo, esse BIN nunca seria selecionado por
+  // calcularBinsParaConsultar (que só olha a quantidade) e seu Local ficaria
+  // congelado pra sempre. O Estoque já é reexportado do zero a cada rodada,
+  // então almoxarifadoPorBin/localPorBin já estão atualizados de graça, sem
+  // nenhuma chamada extra à ORGM.
+  atualizarLocalDeTodosOsBins(mapaLinhasPorBin, almoxarifadoPorBin, localPorBin, colunas);
 
   const backlogRestante = Math.max(0, binsParaConsultar.length - binsProcessados);
   const terminouTudo = backlogRestante === 0 && !falhaGeral;
